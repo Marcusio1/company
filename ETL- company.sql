@@ -136,3 +136,103 @@ FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
 COPY INTO staging_dim_products
 FROM @COMPANY_DATA/company_table_products.csv
 FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1);
+
+
+-- Dimenzia zákazníkov
+CREATE OR REPLACE TABLE dim_customer AS
+SELECT 
+    CustomerId AS customer_id,
+    CustomerName AS customer_name,
+    CONCAT(ContactFirstName, ' ', ContactLastName) AS contact_name,
+    Phone AS phone,
+    CONCAT(AddressLine1, ' ', COALESCE(AddressLine2, '')) AS address,
+    City AS city,
+    State AS state,
+    Country AS country,
+    PostalCode AS postal_code,
+    SalesRepEmployeeNumber AS sales_rep_id,
+    CreditLimit AS credit_limit
+FROM staging_dim_customers;
+
+-- Dimenzia zamestnancov (predstavuje obchodných zástupcov)
+CREATE OR REPLACE TABLE dim_employee AS
+SELECT 
+    e.EmployeeNumber AS employee_id,
+    CONCAT(e.FirstName, ' ', e.LastName) AS full_name,
+    e.JobTitle AS job_title,
+    o.city AS office_city,
+    o.country AS office_country,
+    e.Email AS email
+FROM staging_dim_employees e
+LEFT JOIN staging_dim_offices o ON e.OfficeCode = o.officeCode;
+
+-- Dimenzia produktov
+CREATE OR REPLACE TABLE dim_product AS
+SELECT 
+    p.ProductCode AS product_code,
+    p.ProductName AS product_name,
+    p.ProductLine AS product_line,
+    p.ProductScale AS product_scale,
+    p.ProductVendor AS product_vendor,
+    p.BuyPrice AS buy_price,
+    p.MSRP AS msrp,
+    p.QuantityInStock AS quantity_in_stock
+FROM staging_dim_products p;
+
+-- Dimenzia dátumu (spoločná pre objednávky a platby)
+CREATE OR REPLACE TABLE dim_date AS
+SELECT DISTINCT 
+    OrderDate AS date,
+    EXTRACT(DAY FROM OrderDate) AS day,
+    EXTRACT(MONTH FROM OrderDate) AS month,
+    EXTRACT(YEAR FROM OrderDate) AS year,
+    EXTRACT(QUARTER FROM OrderDate) AS quarter
+FROM staging_fact_orders
+UNION
+SELECT DISTINCT 
+    PaymentDate AS date,
+    EXTRACT(DAY FROM PaymentDate) AS day,
+    EXTRACT(MONTH FROM PaymentDate) AS month,
+    EXTRACT(YEAR FROM PaymentDate) AS year,
+    EXTRACT(QUARTER FROM PaymentDate) AS quarter
+FROM staging_fact_payments;
+
+CREATE OR REPLACE TABLE fact_sales AS
+SELECT 
+    o.OrderNumber AS fact_id,
+    d.date AS date_id,
+    c.customer_id AS customer_id,
+    e.employee_id AS employee_id,
+    p.product_code AS product_code,
+    od.QuantityOrdered AS quantity_ordered,
+    od.PriceEach AS price_each,
+    (od.QuantityOrdered * od.PriceEach) AS total_price,
+    pay.payment_amount AS payment_amount
+FROM staging_fact_orders o
+LEFT JOIN staging_fact_orderdetails od ON o.OrderNumber = od.OrderNumber
+LEFT JOIN dim_customer c ON o.CustomerId = c.customer_id
+LEFT JOIN dim_employee e ON c.sales_rep_id = e.employee_id
+LEFT JOIN dim_product p ON od.ProductCode = p.product_code
+LEFT JOIN staging_fact_payments pay ON o.CustomerId = pay.CustomerId
+LEFT JOIN dim_date d ON o.OrderDate = d.date;
+
+-- Odstránenie staging tabuliek
+DROP TABLE IF EXISTS staging_dim_customers;
+DROP TABLE IF EXISTS staging_dim_employees;
+DROP TABLE IF EXISTS staging_dim_offices;
+DROP TABLE IF EXISTS staging_dim_productlines;
+DROP TABLE IF EXISTS staging_dim_products;
+DROP TABLE IF EXISTS staging_fact_orders;
+DROP TABLE IF EXISTS staging_fact_orderdetails;
+DROP TABLE IF EXISTS staging_fact_payments;
+
+-- Odstránenie dimenzionálnych tabuliek
+DROP TABLE IF EXISTS dim_customer;
+DROP TABLE IF EXISTS dim_employee;
+DROP TABLE IF EXISTS dim_product;
+DROP TABLE IF EXISTS dim_date;
+
+-- Odstránenie faktovej tabuľky
+DROP TABLE IF EXISTS fact_sales;
+
+
